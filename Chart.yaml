@@ -1,0 +1,19 @@
+apiVersion: v2
+name: mxl-testsrc
+description: >-
+  Produce MXL flows with mxl-gst-testsrc, in groups of arbitrary size, pinned to named nodes. A load
+  generator for anything that consumes MXL flows.
+type: application
+version: 0.1.0
+appVersion: v1.1-rc1
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/jonasohland/mxl-replicator
+sources:
+  - https://github.com/jonasohland/mxl-replicator
+keywords:
+  - mxl
+  - media
+  - gstreamer
+  - testing
+maintainers:
+  - name: Jonas Ohland <jonas.ohland@gmail.com>

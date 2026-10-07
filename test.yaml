@@ -1,0 +1,11 @@
+defaults:
+  resources:
+    requests:
+      cpu: 1m
+  audio: {enabled: true}
+groups:
+  - name: testsrc
+    node: fabrics-k8n3
+    domain: /dev/shm/basic-sources
+    count: 8
+    groupHint: "test-%i"

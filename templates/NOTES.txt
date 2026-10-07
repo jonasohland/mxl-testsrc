@@ -1,0 +1,35 @@
+{{- if not .Values.groups }}
+No groups are configured, so this release produces nothing. Add at least one entry to `groups`.
+See values.yaml for the shape of one.
+{{- else }}
+{{ len .Values.groups }} group(s):
+{{ range $group := .Values.groups }}
+{{- $g := include "mxl-testsrc.group" (dict "root" $ "group" $group) | fromYaml }}
+{{- $key := include "mxl-testsrc.flowKey" (dict "root" $ "group" $g) }}
+{{- $first := int $g.startIndex }}
+{{- $last := add $first (int $g.count) | add -1 }}
+  {{ $g.name }}
+    node        {{ default "<unpinned>" $g.node }}
+    domain      {{ $g.domain }}
+    pods        {{ $g.count }}, index {{ $first }}..{{ $last }}
+{{- if $g.video.enabled }}
+    video       {{ $key }}-0000-4000-8000-{{ printf "%012d" $first }} .. {{ printf "%012d" $last }}
+{{- end }}
+{{- if $g.audio.enabled }}
+    audio       {{ $key }}-0001-4000-8000-{{ printf "%012d" $first }} .. {{ printf "%012d" $last }}
+{{- end }}
+    group hints {{ $g.groupHint | replace "%i" (printf "%d" $first) }} .. {{ $g.groupHint | replace "%i" (printf "%d" $last) }}
+{{ end }}
+Watch them come up:
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }} -w
+
+List what a node is publishing, from the node itself or from any pod that mounts the domain:
+
+  mxl-info -d {{ (include "mxl-testsrc.group" (dict "root" $ "group" (first .Values.groups)) | fromYaml).domain }} -l
+
+A generator that has fallen behind looks exactly like a slow consumer from the other end, so check
+it before believing anything downstream. `Latency (grains)` should stay small and stable:
+
+  mxl-info -d <domain> -f <flow-id>
+{{- end }}

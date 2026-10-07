@@ -1,0 +1,184 @@
+{{/*
+One ConfigMap and one StatefulSet per group.
+
+The object count is a function of the number of groups, not of the number of flows, which is what
+makes a group of several hundred cheap to render and to install. Everything per-flow is derived from
+the pod ordinal at startup by files/run.sh.
+*/}}
+{{- $seen := dict -}}
+{{- range $group := .Values.groups }}
+{{- $g := include "mxl-testsrc.group" (dict "root" $ "group" $group) | fromYaml }}
+{{- if hasKey $seen $g.name }}
+{{- fail (printf "two groups are named %q. Names must be unique: they suffix the StatefulSet and seed the flow ids." $g.name) }}
+{{- end }}
+{{- $_ := set $seen $g.name true }}
+{{- $fullname := printf "%s-%s" (include "mxl-testsrc.fullname" $) $g.name }}
+{{- $key := include "mxl-testsrc.flowKey" (dict "root" $ "group" $g) }}
+{{- $config := dict "run.sh" ($.Files.Get "files/run.sh") }}
+{{- if $g.video.enabled }}
+{{- $_ := set $config "video.json" (include "mxl-testsrc.videoFlow" (dict "group" $g)) }}
+{{- with $g.video.options }}
+{{- $_ := set $config "video-options.json" (toPrettyJson .) }}
+{{- end }}
+{{- end }}
+{{- if $g.audio.enabled }}
+{{- $_ := set $config "audio.json" (include "mxl-testsrc.audioFlow" (dict "group" $g)) }}
+{{- with $g.audio.options }}
+{{- $_ := set $config "audio-options.json" (toPrettyJson .) }}
+{{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "mxl-testsrc.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $g.name }}
+  {{- with $.Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  {{- range $name, $content := $config }}
+  {{ $name }}: |
+    {{- $content | nindent 4 }}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "mxl-testsrc.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $g.name }}
+  {{- with $.Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ int $g.count }}
+  # The pods are independent producers and nothing waits for anything, so starting them in ordinal
+  # order would only make a group of several hundred take several hundred startups to come up.
+  podManagementPolicy: Parallel
+  serviceName: {{ include "mxl-testsrc.fullname" $ }}
+  selector:
+    matchLabels:
+      {{- include "mxl-testsrc.selectorLabels" (dict "root" $ "group" $g.name) | nindent 6 }}
+  updateStrategy:
+    {{- toYaml $g.updateStrategy | nindent 4 }}
+  template:
+    metadata:
+      labels:
+        {{- /* `labels` already carries the name and instance halves of the selector. */}}
+        {{- include "mxl-testsrc.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $g.name }}
+        {{- with $g.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # A changed flow definition or entrypoint has to reach the pods, and nothing else would
+        # make them roll.
+        checksum/config: {{ toYaml $config | sha256sum }}
+        {{- with $.Values.commonAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with $g.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with $.Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- $selector := $g.nodeSelector }}
+      {{- if $g.node }}
+      {{- $selector = merge (dict "kubernetes.io/hostname" $g.node) (deepCopy $g.nodeSelector) }}
+      {{- end }}
+      {{- with $selector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $g.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $g.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $g.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ $g.terminationGracePeriodSeconds }}
+      {{- with $g.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}
+        {{- range $mount := $g.hostMounts }}
+        - name: {{ $mount.name }}
+          hostPath:
+            path: {{ $mount.hostPath }}
+            type: {{ default "Directory" $mount.type }}
+        {{- end }}
+        {{- with $g.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: mxl-gst-testsrc
+          image: {{ include "mxl-testsrc.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: [/bin/bash, /config/run.sh]
+          {{- with $g.extraArgs }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: MXL_TESTSRC_DOMAIN
+              value: {{ $g.domain | quote }}
+            - name: MXL_TESTSRC_KEY
+              value: {{ $key | quote }}
+            - name: MXL_TESTSRC_START_INDEX
+              value: {{ $g.startIndex | quote }}
+            - name: MXL_TESTSRC_GROUP_HINT
+              value: {{ $g.groupHint | quote }}
+            - name: MXL_TESTSRC_OVERLAY
+              value: {{ default $g.label $g.overlayText | quote }}
+            - name: MXL_TESTSRC_PATTERN
+              value: {{ $g.pattern | quote }}
+            - name: MXL_TESTSRC_VIDEO
+              value: {{ $g.video.enabled | quote }}
+            - name: MXL_TESTSRC_AUDIO
+              value: {{ $g.audio.enabled | quote }}
+            - name: MXL_TESTSRC_CLEANUP
+              value: {{ $g.cleanupOnExit | quote }}
+            - name: MXL_LOG_LEVEL
+              value: {{ $g.logLevel | quote }}
+            {{- with $g.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            {{- range $mount := $g.hostMounts }}
+            - name: {{ $mount.name }}
+              mountPath: {{ $mount.mountPath }}
+            {{- end }}
+            {{- with $g.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $g.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $g.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

@@ -1,0 +1,35 @@
+# Two groups on one node, sharing a domain: a few full-rate HD flows with audio, and a handful of
+# cheap ones to push the flow count up. What this chart was tested with on fabrics-on-k8.
+#
+#   helm install testsrc ./deployment/mxl-testsrc -n testsrc --create-namespace -f examples/n1.yaml
+
+defaults:
+  domain: /dev/shm/mxl-testsrc
+
+  # The node has four cores. Measured, an HD flow with audio takes 230m and a 320x180 flow 8m, so
+  # the chart's 1-core default request would keep three pods on the node and nothing else.
+  resources:
+    requests: {cpu: 250m, memory: 128Mi}
+    limits: {memory: 512Mi}
+
+groups:
+  - name: hd
+    node: fabrics-on-k8-n1
+    count: 2
+    label: "hd testsrc %i"
+    groupHint: "testsrc-hd-%i"
+    video: {width: 1920, height: 1080, rate: {num: 25, den: 1}}
+    audio: {enabled: true, rate: 48000}
+
+  - name: small
+    node: fabrics-on-k8-n1
+    count: 3
+    # Offset so the two groups cannot collide on a hint name, which they would not here, but the
+    # habit is what keeps them from colliding once one of them grows.
+    startIndex: 100
+    pattern: black
+    groupHint: "testsrc-small-%i"
+    video: {width: 320, height: 180, rate: {num: 25, den: 1}}
+    resources:
+      requests: {cpu: 25m, memory: 32Mi}
+      limits: {memory: 128Mi}

@@ -1,0 +1,25 @@
+{{/*
+A headless Service, only because a StatefulSet names one. Nothing connects to these pods — they
+publish into a domain on their node's filesystem and are reached through it, not over the network.
+*/}}
+{{- if .Values.groups }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mxl-testsrc.fullname" . }}
+  labels:
+    {{- include "mxl-testsrc.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: {{ include "mxl-testsrc.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: none
+      port: 1
+{{- end }}
